@@ -1,21 +1,27 @@
-const mysql = require('mysql2');
+const { Pool } = require('pg');
 const dotenv = require('dotenv');
 
 dotenv.config();
-//credenciales de la base de datos que estan en nuestro .env
-const connection = mysql.createConnection({
+
+// Configuración del pool de conexiones para PostgreSQL
+const pool = new Pool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME  
-});
-
-connection.connect((err) => {
-  if (err) {
-    console.error('Error al conectar a la base de datos:', err);
-    return;
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 5432,
+  ssl: {
+    rejectUnauthorized: false // Necesario para Supabase
   }
-  console.log('Conectado a la base de datos.');
 });
 
-module.exports = connection;
+// Verificar conexión
+pool.on('connect', () => {
+  console.log('✅ Conectado a PostgreSQL (Supabase)');
+});
+
+pool.on('error', (err) => {
+  console.error('❌ Error en la conexión a PostgreSQL:', err);
+});
+
+module.exports = pool;

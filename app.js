@@ -10,7 +10,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const corsOptions = {
-  origin: 'http://localhost:5173', // Colocar el dominio que me de AWS
+  origin: [
+    'http://localhost:5173',
+    'https://pascasioapi.onrender.com'  // Tu URL de Render
+  ],
   methods: 'GET,POST',
   allowedHeaders: 'Content-Type'
 };

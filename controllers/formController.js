@@ -1,4 +1,4 @@
-const pool = require('../config/db');
+const supabase = require('../config/db');
 
 // Enviar formulario
 const enviarFormulario = async (req, res) => {
@@ -11,14 +11,28 @@ const enviarFormulario = async (req, res) => {
     });
   }
 
-  const sql = 'INSERT INTO formularios (registro_id, name, descripcion, confi, otroConfi, colegio, mensaje, latitud, longitud) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id';
-
   try {
-    const result = await pool.query(sql, [registro_id, name, descripcion, confi, otroConfi, colegio, mensaje, latitud, longitud]);
+    const { data, error } = await supabase
+      .from('formularios')
+      .insert([{
+        registro_id,
+        name,
+        descripcion,
+        confi,
+        otroConfi,
+        colegio,
+        mensaje,
+        latitud,
+        longitud
+      }])
+      .select();
+
+    if (error) throw error;
+
     res.status(200).json({ 
       success: true,
       message: 'Formulario enviado exitosamente 🤗',
-      formulario_id: result.rows[0].id
+      formulario_id: data[0].id
     });
   } catch (err) {
     console.error('Error al insertar los datos:', err);
@@ -47,28 +61,32 @@ const registrarUsuario = async (req, res) => {
       message: 'El username no puede exceder 255 caracteres' 
     });
   }
-  
-  const sql = 'INSERT INTO registros (username) VALUES ($1) RETURNING id, username';
-  
+
   try {
-    const result = await pool.query(sql, [username.trim()]);
+    const { data, error } = await supabase
+      .from('registros')
+      .insert([{ username: username.trim() }])
+      .select();
+
+    if (error) {
+      // Manejar error de username duplicado
+      if (error.code === '23505') {
+        return res.status(409).json({ 
+          success: false,
+          message: 'El username ya existe. Por favor, elige otro username.' 
+        });
+      }
+      throw error;
+    }
+
     res.status(200).json({ 
       success: true,
       message: `Usuario ${username} registrado exitosamente`,
-      username: result.rows[0].username,
-      userId: result.rows[0].id
+      username: data[0].username,
+      userId: data[0].id
     });
   } catch (err) {
     console.error('Error al registrar usuario:', err);
-    
-    // Manejar error de username duplicado (código diferente en PostgreSQL)
-    if (err.code === '23505') {
-      return res.status(409).json({ 
-        success: false,
-        message: 'El username ya existe. Por favor, elige otro username.' 
-      });
-    }
-    
     res.status(500).json({ 
       success: false,
       message: 'Error al registrar el usuario en la base de datos',
@@ -79,58 +97,33 @@ const registrarUsuario = async (req, res) => {
 
 // Obtener preguntas
 const obtenerPreguntas = async (req, res) => {
-  const sql = `
-    SELECT 
-      p.id as pregunta_id,
-      p.texto as pregunta_texto,
-      p.tipo,
-      p.obligatorio,
-      p.es_sensible,
-      p.genera_alerta,
-      p.orden as pregunta_orden,
-      o.id as opcion_id,
-      o.texto as opcion_texto,
-      o.valor as opcion_valor,
-      o.orden as opcion_orden
-    FROM preguntas p
-    LEFT JOIN opciones o ON p.id = o.pregunta_id
-    ORDER BY p.orden, o.orden
-  `;
-
   try {
-    const result = await pool.query(sql);
-    const preguntasMap = {};
-    
-    result.rows.forEach(row => {
-      if (!preguntasMap[row.pregunta_id]) {
-        preguntasMap[row.pregunta_id] = {
-          id: row.pregunta_id,
-          texto: row.pregunta_texto,
-          tipo: row.tipo,
-          obligatorio: row.obligatorio,
-          es_sensible: row.es_sensible,
-          genera_alerta: row.genera_alerta,
-          orden: row.pregunta_orden,
-          opciones: []
-        };
-      }
-      
-      if (row.opcion_id) {
-        preguntasMap[row.pregunta_id].opciones.push({
-          id: row.opcion_id,
-          texto: row.opcion_texto,
-          valor: row.opcion_valor,
-          orden: row.opcion_orden
-        });
-      }
-    });
+    // Obtener todas las preguntas
+    const { data: preguntas, error: preguntasError } = await supabase
+      .from('preguntas')
+      .select('*')
+      .order('orden');
 
-    const preguntas = Object.values(preguntasMap).sort((a, b) => a.orden - b.orden);
+    if (preguntasError) throw preguntasError;
+
+    // Obtener todas las opciones
+    const { data: opciones, error: opcionesError } = await supabase
+      .from('opciones')
+      .select('*')
+      .order('orden');
+
+    if (opcionesError) throw opcionesError;
+
+    // Agrupar opciones por pregunta
+    const preguntasConOpciones = preguntas.map(pregunta => ({
+      ...pregunta,
+      opciones: opciones.filter(opcion => opcion.pregunta_id === pregunta.id)
+    }));
 
     res.status(200).json({ 
       success: true,
-      preguntas: preguntas,
-      total: preguntas.length
+      preguntas: preguntasConOpciones,
+      total: preguntasConOpciones.length
     });
   } catch (err) {
     console.error('Error al obtener preguntas:', err);
@@ -163,35 +156,26 @@ const guardarRespuestas = async (req, res) => {
     }
   }
 
-  // Preparar valores para inserción múltiple
-  const valores = respuestas.map(r => [
+  // Preparar datos para inserción
+  const respuestasParaInsertar = respuestas.map(r => ({
     registro_id,
-    r.pregunta_id,
-    r.opcion_id || null,
-    r.respuesta_text || null
-  ]);
-
-  // Crear placeholders para PostgreSQL ($1, $2, $3, etc.)
-  let paramIndex = 1;
-  const placeholders = valores.map(() => {
-    const placeholder = `($${paramIndex}, $${paramIndex + 1}, $${paramIndex + 2}, $${paramIndex + 3})`;
-    paramIndex += 4;
-    return placeholder;
-  }).join(', ');
-  
-  const sql = `
-    INSERT INTO respuestas (registro_id, pregunta_id, opcion_id, respuesta_text) 
-    VALUES ${placeholders}
-  `;
-
-  const valoresAplanados = valores.flat();
+    pregunta_id: r.pregunta_id,
+    opcion_id: r.opcion_id || null,
+    respuesta_text: r.respuesta_text || null
+  }));
 
   try {
-    const result = await pool.query(sql, valoresAplanados);
+    const { data, error } = await supabase
+      .from('respuestas')
+      .insert(respuestasParaInsertar)
+      .select();
+
+    if (error) throw error;
+
     res.status(200).json({ 
       success: true,
       message: 'Respuestas guardadas exitosamente',
-      respuestas_guardadas: result.rowCount,
+      respuestas_guardadas: data.length,
       registro_id: registro_id
     });
   } catch (err) {

@@ -1,27 +1,25 @@
-const { Pool } = require('pg');
+const { createClient } = require('@supabase/supabase-js');
 const dotenv = require('dotenv');
 
 dotenv.config();
 
-// Configuración del pool de conexiones para PostgreSQL
-const pool = new Pool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 5432,
-  ssl: {
-    rejectUnauthorized: false // Necesario para Supabase
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+
+// Probar conexión al iniciar
+(async () => {
+  try {
+    const { data, error } = await supabase.from('preguntas').select('id').limit(1);
+    if (error) {
+      console.error('❌ Error al conectar con Supabase:', error.message);
+    } else {
+      console.log('✅ Conectado exitosamente a Supabase');
+    }
+  } catch (err) {
+    console.error('❌ Error de conexión:', err.message);
   }
-});
+})();
 
-// Verificar conexión
-pool.on('connect', () => {
-  console.log('✅ Conectado a PostgreSQL (Supabase)');
-});
-
-pool.on('error', (err) => {
-  console.error('❌ Error en la conexión a PostgreSQL:', err);
-});
-
-module.exports = pool;
+module.exports = supabase;
